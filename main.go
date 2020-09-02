@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io/ioutil"
 	"net/http"
 	"os"
@@ -10,10 +11,6 @@ import (
 	"github.com/tessellator/executil"
 	"github.com/tessellator/fnrun"
 )
-
-type contextDefaults struct {
-	MaxRunnableTime time.Duration
-}
 
 func main() {
 	cmd, err := executil.ParseCmd(os.Getenv("FUNCTION_COMMAND"))
@@ -53,29 +50,21 @@ func main() {
 		MaxInvokerCount: maxFuncCount,
 		InvokerFactory:  fnrun.NewCmdInvokerFactory(cmd),
 		MaxWaitDuration: time.Duration(maxWaitMillis) * time.Millisecond,
+		MaxRunnableTime: time.Duration(maxExecMillis) * time.Millisecond,
 	}
 	pool, err := fnrun.NewInvokerPool(config)
 	if err != nil {
 		panic(err)
 	}
 
-	defaults := contextDefaults{
-		MaxRunnableTime: time.Duration(maxExecMillis) * time.Millisecond,
-	}
-	handler := makeHandler(pool, &defaults)
-
+	handler := makeHandler(pool)
 	http.HandleFunc("/", handler)
-
 	http.ListenAndServe(":8080", nil)
 }
 
-func makeHandler(pool *fnrun.InvokerPool, defaults *contextDefaults) func(http.ResponseWriter, *http.Request) {
+func makeHandler(pool *fnrun.InvokerPool) func(http.ResponseWriter, *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// TODO Define and load up the context with information from the request
-		ctx := fnrun.ExecutionContext{
-			MaxRunnableTime: defaults.MaxRunnableTime,
-			Env:             make(map[string]string),
-		}
 
 		data, err := ioutil.ReadAll(r.Body)
 		r.Body.Close()
@@ -87,7 +76,7 @@ func makeHandler(pool *fnrun.InvokerPool, defaults *contextDefaults) func(http.R
 		}
 		input := fnrun.Input{Data: data}
 
-		result, err := pool.Invoke(&input, &ctx)
+		result, err := pool.Invoke(context.TODO(), &input)
 		if err != nil {
 			if err == fnrun.ErrAvailabilityTimeout {
 				w.WriteHeader(http.StatusServiceUnavailable)
